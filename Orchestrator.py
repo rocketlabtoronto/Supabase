@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""Top-level runner that refreshes both US and Canadian data."""
+"""Orchestrator: load CA Yahoo financials and SimFin CSV statements."""
 import subprocess
 import pathlib
 import sys
 
 SCRIPTS = [
-    "scripts/load_yfinance_ca.py",
-    "scripts/load_simfin.py"
+    "ingestion/ingest_yahoo_financials_postgres_ca.py",
+    "ingestion/ingest_simfin_financials_csv_to_postgres_us.py",
 ]
 
 def main():
@@ -14,10 +14,10 @@ def main():
     for script in SCRIPTS:
         path = root / script
         if path.exists():
-            print(f"[update_financials] Running {path} …")
+            print(f"[orchestrator] Running {path} …")
             subprocess.run([sys.executable, str(path)], check=True)
         else:
-            print(f"[update_financials] Missing {path} – skipping.")
+            print(f"[orchestrator] Missing {path} – skipping.")
 
 if __name__ == "__main__":
     main()

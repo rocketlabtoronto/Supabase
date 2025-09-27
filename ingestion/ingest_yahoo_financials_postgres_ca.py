@@ -34,7 +34,7 @@ def get_ca_tickers():
     if env.upper() == "FILE":
         path = os.path.join("data", "ca_tickers.txt")
         if not os.path.exists(path):
-            print("[load_yfinance_ca] data/ca_tickers.txt not found.")
+            print("[ingest_yahoo_financials_postgres_ca] data/ca_tickers.txt not found.")
             return []
         return [l.strip() for l in open(path) if l.strip()]
     return [t.strip() for t in env.split(",") if t.strip()]
@@ -42,7 +42,7 @@ def get_ca_tickers():
 def main():
     tickers = get_ca_tickers()
     if not tickers:
-        print("[load_yfinance_ca] No tickers supplied.")
+        print("[ingest_yahoo_financials_postgres_ca] No tickers supplied.")
         return
 
     conn = psycopg2.connect(
@@ -68,7 +68,7 @@ def main():
             continue
 
         fy_date = bs.columns[0].date()
-        print(f"[load_yfinance_ca] Inserting {ticker} – FY {fy_date}")
+        print(f"[ingest_yahoo_financials_postgres_ca] Inserting {ticker} – FY {fy_date}")
 
         for tag, (yf_key, stmt) in FIELDS["IS"].items():
             raw_val = None
@@ -119,13 +119,13 @@ def main():
             
         pct = math.floor((i + 1) / total * 100)
         if pct != last_pct:
-            print(f"[load_yfinance_ca] {pct}%")
+            print(f"[ingest_yahoo_financials_postgres_ca] {pct}%")
             last_pct = pct
 
     conn.commit()
     cur.close()
     conn.close()
-    print("[load_yfinance_ca] Done.")
+    print("[ingest_yahoo_financials_postgres_ca] Done.")
 
 if __name__ == "__main__":
     sys.exit(main())

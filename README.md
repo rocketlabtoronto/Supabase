@@ -1,110 +1,129 @@
-<<<<<<< HEAD
-# Supabase
-Automated stock data pipeline powering LookThroughProfits. Loads US/CA prices from Yahoo Finance and SimFin, imports SimFin financials from CSV, and writes to Supabase Postgres. Features smart resume, rate limiting, exchange tagging, .env config, and robust error handling and logging.
-=======
-# LookThroughProfits-Supabase
+# LookThroughProfits Supabase Data Pipeline
 
-Small data ingestion toolkit that loads company financials into a Postgres database. The repository contains scripts to fetch Canadian tickers, import Yahoo (yfinance) data for TSX (.TO) tickers, and import SimFin CSV exports for US companies.
+Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian daily prices from Yahoo Finance (yfinance) and imports SimFin financial statements from CSV into a Supabase (Postgres) database. Includes smart resume, rate limiting, exchange tagging, and .env-based configuration.
 
-Contents
+## Features
 
-- download_ca_tickers.py - scrape TSX tickers from EODData and save to data/ca_tickers.txt
-- update_financials.py - top-level runner that executes scripts in `scripts/`
-- scripts/load_yfinance_ca.py - load annual income / balance / cashflow fields from yfinance for Canadian tickers
-- scripts/load_simfin.py - load SimFin CSV exports (semicolon-separated) into DB
-- scripts/yfinance_fields_explorer.py - helper to dump available yfinance field names to CSV
-- data/ - expected data files (see below)
-- sql/create_tables.sql - recommended table schema (financials table)
-- requirements.txt - Python dependencies
+- US/CA daily prices via yfinance with robust error handling and configurable delays
+- US prices via SimFin API (optional) with rate limiting and batching tuned for free tier
+- Annual financial statements via SimFin CSV exports (semicolon-delimited)
+- Smart resume: continues where it left off based on last processed ticker/date
+- Exchange tagging (US/CA) and upsert-safe inserts
+- Supabase Postgres compatible schema and SQL helpers
 
-Quick start
+## Repository structure
 
-1. Create and activate a Python virtual environment
-   PowerShell:
-   python -m venv venv; .\venv\Scripts\Activate.ps1
+- `Orchestrator.py` — Orchestrates CA Yahoo financials + SimFin CSV loading
+- `ingestion/`
+  - `ingest_yahoo_financials_postgres_ca.py` — Canadian annual financials via Yahoo Finance
+  - `ingest_simfin_financials_csv_to_postgres_us.py` — Import IS/BS from SimFin CSV exports
+  - `ingest_yahoo_prices_us.py` — US daily prices via Yahoo Finance (smart resume)
+  - `ingest_yahoo_prices_ca.py` — Canadian daily prices via Yahoo Finance
+- `tools/`
+  - `scrape_tsx_stocksymbols_ca.py` — Scrape TSX stock symbols (no prices) to `data/ca_tickers.txt`
+  - `explore_yahoo_finance_fields.py` — Discover available Yahoo Finance fields
+- `sql/`
+  - `create_tables.sql` — Financials table schema (statements)
+  - `create_tables_stockprice.sql` — Stock prices table schema (daily OHLCV)
+- `data/` — CSVs and ticker lists (ignored by git)
+- `dependencies.txt` — Python dependencies
+
+## Setup
+
+1. Create a Python virtual environment
+
+PowerShell:
+
+```
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
 
 2. Install dependencies
-   python -m pip install -r requirements.txt
 
-3. Copy or create a .env file in the repository root with database and config variables (example below).
+```
+python -m pip install -r dependencies.txt
+```
 
-Environment variables (used by scripts)
+3. Configure environment variables in a `.env` file at the repo root
 
-- DB_HOST - Postgres host
-- DB_PORT - Postgres port (defaults to 5432)
-- DB_NAME - Postgres database name
-- DB_USER - Postgres username
-- DB_PASSWORD - Postgres password
-- CA_TICKERS - either a comma-separated list of tickers (e.g. "BNS.TO,RY.TO") or the literal "FILE" to read `data/ca_tickers.txt`
-- SIMFIN_DATA_DIR - directory containing SimFin CSV files (defaults to `data`)
+Required for database:
 
-Example .env
+- `DB_HOST` — Postgres host (Supabase pooler host if applicable)
+- `DB_PORT` — Postgres port (default 5432)
+- `DB_NAME` — Database name
+- `DB_USER` — Username
+- `DB_PASSWORD` — Password
+
+Optional for loaders:
+
+- `SIMFIN_API_KEY` — SimFin API key (for future SimFin API loaders)
+- `SIMFIN_DATA_DIR` — Folder containing SimFin CSV exports (default `data`)
+- `CA_TICKERS` — Comma list (e.g. `BNS.TO,RY.TO`) or `FILE` to read `data/ca_tickers.txt`
+- `YFINANCE_DELAY` — Seconds between requests (default `1.0` US, `0.5` CA)
+- `SIMFIN_BATCH_SIZE` — Companies per request for SimFin (free tier: `1`)
+- `CLEAR_STOCK_PRICES` — `true` to truncate prices before load (use with care)
+
+Example `.env`:
+
+```
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=financials
 DB_USER=me
 DB_PASSWORD=secret
-CA_TICKERS=FILE
+SIMFIN_API_KEY=your_simfin_key
 SIMFIN_DATA_DIR=data
+CA_TICKERS=FILE
+YFINANCE_DELAY=1.0
+SIMFIN_BATCH_SIZE=1
+CLEAR_STOCK_PRICES=false
+```
 
-Database: expected table
-All loader scripts insert into a table named `financials`. See `sql/create_tables.sql` for a recommended schema. The code expects at least these columns:
+## Database schema
 
-- ticker (text)
-- exchange (text) — e.g. "CA" or "US"
-- fy_end_date (date)
-- stmt_type (text) — "IS" or "BS"
-- tag (text) — semantic tag like Revenue, NetIncome, Equity, etc.
-- value (numeric)
-- unit (text) — currency, e.g. "CAD" or "USD"
-- source (text) — e.g. "Yahoo" or "SimFin"
+Apply the SQL files in `sql/` to your Postgres database (Supabase):
 
-How each script works
+- `create_tables.sql` — creates `financials` for statements (IS/BS)
+- `create_tables_stockprice.sql` — creates `stock_prices` for OHLCV with `exchange` column and useful indexes
 
-- download_ca_tickers.py
-  Scrapes EODData (A–Z pages) for TSX symbols and writes `data/ca_tickers.txt`. Symbols are written with the ".TO" suffix for Yahoo/yfinance compatibility.
+## Usage
 
-- scripts/load_yfinance_ca.py
-  Reads tickers from the `CA_TICKERS` env var (or `data/ca_tickers.txt` if CA_TICKERS=FILE). For each ticker it uses yfinance to fetch balance sheet, income statement and cashflow. It maps a small set of fields (see FIELDS dict in file) and inserts rows into `financials`. Behavior notes:
+Run orchestrator:
 
-  - Skips tickers with missing IS or BS data
-  - Uses `ON CONFLICT DO NOTHING` to avoid duplicate inserts
-  - Removes the `.TO` suffix when inserting the `ticker` value
+```
+python Orchestrator.py
+```
 
-- scripts/load_simfin.py
-  Loads SimFin CSV exports (semicolon-separated) for annual Income Statement and Balance Sheet. Mapped column names are defined in `INCOME_TAGS` and `BALANCE_TAGS`. The script expects CSV files like `Income_Statement_Annual.csv` and `Balance_Sheet_Annual.csv` in `SIMFIN_DATA_DIR`.
+Or run individual ingesters, e.g.:
 
-- scripts/yfinance_fields_explorer.py
-  Interactive helper that queries yfinance for a supplied ticker and writes a CSV listing available fields (info, income, balance, cashflow) to help expand or adjust mappings.
+```
+python ingestion/ingest_yahoo_prices_us.py
+python ingestion/ingest_yahoo_prices_ca.py
+python ingestion/ingest_simfin_financials_csv_to_postgres_us.py
+python ingestion/ingest_yahoo_financials_postgres_ca.py
+```
 
-Top-level runner
+Notes:
 
-- update_financials.py runs the scripts listed in the SCRIPTS constant (by default it runs `scripts/load_yfinance_ca.py` and `scripts/load_simfin.py`). Run it to perform both imports:
-  python update_financials.py
+- The yfinance loaders implement delays to respect rate limits.
+- US loader resumes from the last processed ticker automatically.
+- Canadian loader normalizes tickers and tags `exchange='CA'`.
+- SimFin CSVs must be semicolon-delimited and placed in `SIMFIN_DATA_DIR`.
+- Legacy scripts under `scripts/` remain as shims and will forward to the new modules under `ingestion/` and `tools/`. Prefer calling the new paths directly.
 
-Data notes
+## Troubleshooting
 
-- SimFin CSVs are semicolon-separated. The loader uses pandas.read_csv(sep=';')
-- `data/ca_tickers.txt` should contain one ticker per line ending with `.TO` for Yahoo
+- Connection issues: verify `.env` and that your Supabase IP is allowed.
+- Empty or missing data: some tickers may be delisted or lack fields; the loaders skip and continue.
+- Non-fast-forward pushes: `git pull --rebase origin main` then `git push`.
 
-Troubleshooting
+## Contributing / Next steps
 
-- Database connection errors: verify .env variables and that Postgres accepts connections from your host.
-- Missing tickers: set CA_TICKERS=FILE and generate `data/ca_tickers.txt` using `download_ca_tickers.py`.
-- yfinance missing fields / rate limits: yfinance can return empty DataFrames for some tickers. The scripts skip missing values and continue. Consider running smaller batches or adding retries.
+- Add CI to run a lightweight smoke test against a local Postgres
+- Expand field mappings and add unit tests for transforms
+- Optional: Dockerfile and Compose for local DB and runners
 
-Extending
+## License
 
-- Add more field mappings in `FIELDS` (for `load_yfinance_ca.py`) or `INCOME_TAGS/BALANCE_TAGS` (`load_simfin.py`) to capture additional metrics.
-- You can modify insert behavior (e.g. upsert rather than `ON CONFLICT DO NOTHING`) to update existing records.
-
-License
-No license specified. Add a LICENSE file if you plan to share the project publicly.
-
-Contact / next steps
-If you want, I can:
-
-- Add a `Makefile` / PowerShell script to run the whole pipeline
-- Create a simple test database and CI check
-- Generate a Postgres migration from `sql/create_tables.sql`
->>>>>>> 7d8fb6c (Initial commit: LookThroughProfits stock price automation system)
+No license specified. Add a LICENSE file if you plan to share publicly.

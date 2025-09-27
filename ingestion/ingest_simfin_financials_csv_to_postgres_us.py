@@ -19,9 +19,6 @@ BALANCE_TAGS = {
     "Assets": "Total Assets"
 }
 
-
-
-
 def safe(val):
     if pd.isna(val): return None
     try: return float(val)
@@ -29,9 +26,9 @@ def safe(val):
 
 def load_csv(conn, path, stmt_type, tag_map):
     if not os.path.exists(path):
-        print(f"[load_simfin] File missing → {path}")
+        print(f"[ingest_simfin_csv] File missing → {path}")
         return
-    print(f"[load_simfin] Loading {os.path.basename(path)} …")
+    print(f"[ingest_simfin_csv] Loading {os.path.basename(path)} …")
 
     df = pd.read_csv(path, sep=";")
     total = len(df)
@@ -65,16 +62,6 @@ def load_csv(conn, path, stmt_type, tag_map):
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING 1;
             """, (ticker, "US", fy_end, stmt_type, tag, val, currency, "SimFin"))
-            
-            
-            #sql = """
-            #    INSERT INTO financials
-            #    (ticker, exchange, fy_end_date, stmt_type, tag, value, unit, source)
-            #    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            #    RETURNING 1;
-            #"""
-            #params = (ticker, "US", fy_end, stmt_type, tag, val, currency, "SimFin")
-            #print(cur.mogrify(sql, params).decode("utf-8"))
 
         pct = math.floor((i + 1) / total * 100)
         if pct != last_pct:
@@ -82,7 +69,7 @@ def load_csv(conn, path, stmt_type, tag_map):
             last_pct = pct
 
     cur.close()
-    print(f"[load_simfin] Done {stmt_type}.")
+    print(f"[ingest_simfin_csv] Done {stmt_type}.")
 
 def main():
     conn = psycopg2.connect(
@@ -98,7 +85,7 @@ def main():
     load_csv(conn, os.path.join(data_dir, "Balance_Sheet_Annual.csv"), "BS", BALANCE_TAGS)
 
     conn.close()
-    print("[load_simfin] All done.")
+    print("[ingest_simfin_csv] All done.")
 
 if __name__ == "__main__":
     sys.exit(main())
