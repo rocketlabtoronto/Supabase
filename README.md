@@ -1,11 +1,10 @@
 # LookThroughProfits Supabase Data Pipeline
 
-Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian daily prices from Yahoo Finance (yfinance) and imports SimFin financial statements from CSV into a Supabase (Postgres) database. Includes smart resume, rate limiting, exchange tagging, and .env-based configuration.
+Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian daily prices from Yahoo Finance (yfinance) and imports SimFin financial statements from CSV into a Supabase (Postgres) database. Includes smart resume (US), upsert-safe inserts, and .env-based configuration.
 
 ## Features
 
-- US/CA daily prices via yfinance with robust error handling and configurable delays
-- US prices via SimFin API (optional) with rate limiting and batching tuned for free tier
+- US/CA daily prices via yfinance with robust error handling
 - Annual financial statements via SimFin CSV exports (semicolon-delimited)
 - Smart resume: continues where it left off based on last processed ticker/date
 - Exchange tagging (US/CA) and upsert-safe inserts
@@ -25,8 +24,46 @@ Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian
 - `sql/`
   - `create_tables.sql` — Financials table schema (statements)
   - `create_tables_stockprice.sql` — Stock prices table schema (daily OHLCV)
-- `data/` — CSVs and ticker lists (ignored by git)
+- `data/` — CSVs and ticker lists (local; large/generated files should be gitignored)
 - `dependencies.txt` — Python dependencies
+
+## Workflow (at a glance)
+
+There are five flows. The Orchestrator runs #2 then #3 (in that order). The others are manual.
+
+```
+1) TSX symbols (optional)
+   EODData.com (TSX listings HTML)
+     ---> tools/scrape_tsx_stocksymbols_ca.py
+     ---> data/ca_tickers.txt (one .TO symbol per line)
+     [Used when CA_TICKERS=FILE]
+
+2) CA financials (Orchestrator step 1)
+   Yahoo Finance (via yfinance)
+     ---> ingestion/ingest_yahoo_financials_postgres_ca.py
+     ---> financials table (Income Statement and Balance Sheet)
+
+3) US financials (Orchestrator step 2)
+   SimFin CSV exports (semicolon-delimited)
+     ---> ingestion/ingest_simfin_financials_csv_to_postgres_us.py
+     ---> financials table (Income Statement and Balance Sheet)
+
+4) US daily prices (run manually)
+   Yahoo Finance (via yfinance)
+     ---> ingestion/ingest_yahoo_prices_us.py
+     ---> stock_prices (exchange='US')
+
+5) CA daily prices (run manually)
+   Yahoo Finance (via yfinance)
+     ---> ingestion/ingest_yahoo_prices_ca.py
+     ---> stock_prices (exchange='CA')
+```
+
+### Source details
+
+- EODData (https://www.eoddata.com/): Public website with TSX listings rendered as HTML. The scraper parses symbol links from A–Z pages using a regex; there is no REST API used. Output is a plain text file `data/ca_tickers.txt` with one `.TO`-suffixed symbol per line.
+- Yahoo Finance: Online market data service accessed via the Python `yfinance` library (no API key required). The loaders request recent price history and write to the `stock_prices` table.
+- SimFin: Financial statement CSVs downloaded from simfin.com (semicolon-delimited). Place files like `Income_Statement_Annual.csv` and `Balance_Sheet_Annual.csv` under `SIMFIN_DATA_DIR` (default `data/`).
 
 ## Setup
 
@@ -60,8 +97,7 @@ Optional for loaders:
 - `SIMFIN_API_KEY` — SimFin API key (for future SimFin API loaders)
 - `SIMFIN_DATA_DIR` — Folder containing SimFin CSV exports (default `data`)
 - `CA_TICKERS` — Comma list (e.g. `BNS.TO,RY.TO`) or `FILE` to read `data/ca_tickers.txt`
-- `YFINANCE_DELAY` — Seconds between requests (default `1.0` US, `0.5` CA)
-- `SIMFIN_BATCH_SIZE` — Companies per request for SimFin (free tier: `1`)
+- `YFINANCE_DELAY` — Seconds between requests for US prices loader (default `1.0`)
 - `CLEAR_STOCK_PRICES` — `true` to truncate prices before load (use with care)
 
 Example `.env`:
@@ -76,7 +112,6 @@ SIMFIN_API_KEY=your_simfin_key
 SIMFIN_DATA_DIR=data
 CA_TICKERS=FILE
 YFINANCE_DELAY=1.0
-SIMFIN_BATCH_SIZE=1
 CLEAR_STOCK_PRICES=false
 ```
 
@@ -106,11 +141,11 @@ python ingestion/ingest_yahoo_financials_postgres_ca.py
 
 Notes:
 
-- The yfinance loaders implement delays to respect rate limits.
-- US loader resumes from the last processed ticker automatically.
+- The US yfinance loader implements an adjustable delay (`YFINANCE_DELAY`) to respect rate limits; the CA loader currently does not delay between requests.
+- US loader resumes from the last processed ticker automatically using entries written for the current day.
 - Canadian loader normalizes tickers and tags `exchange='CA'`.
 - SimFin CSVs must be semicolon-delimited and placed in `SIMFIN_DATA_DIR`.
-- Legacy scripts under `scripts/` remain as shims and will forward to the new modules under `ingestion/` and `tools/`. Prefer calling the new paths directly.
+- Legacy files have been removed or converted to in-place shims; prefer calling modules under `ingestion/` and `tools/` directly.
 
 ## Troubleshooting
 
