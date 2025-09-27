@@ -1,0 +1,344 @@
+Field
+info_fields
+address1
+city
+state
+zip
+country
+website
+industry
+industryKey
+industryDisp
+sector
+sectorKey
+sectorDisp
+longBusinessSummary
+fullTimeEmployees
+companyOfficers
+auditRisk
+boardRisk
+compensationRisk
+shareHolderRightsRisk
+overallRisk
+governanceEpochDate
+compensationAsOfEpochDate
+irWebsite
+executiveTeam
+maxAge
+priceHint
+previousClose
+open
+dayLow
+dayHigh
+regularMarketPreviousClose
+regularMarketOpen
+regularMarketDayLow
+regularMarketDayHigh
+dividendRate
+dividendYield
+exDividendDate
+payoutRatio
+fiveYearAvgDividendYield
+beta
+trailingPE
+forwardPE
+volume
+regularMarketVolume
+averageVolume
+averageVolume10days
+averageDailyVolume10Day
+bid
+ask
+bidSize
+askSize
+marketCap
+fiftyTwoWeekLow
+fiftyTwoWeekHigh
+priceToSalesTrailing12Months
+fiftyDayAverage
+twoHundredDayAverage
+trailingAnnualDividendRate
+trailingAnnualDividendYield
+currency
+tradeable
+enterpriseValue
+profitMargins
+floatShares
+sharesOutstanding
+sharesShort
+sharesShortPriorMonth
+sharesShortPreviousMonthDate
+dateShortInterest
+sharesPercentSharesOut
+heldPercentInsiders
+heldPercentInstitutions
+shortRatio
+impliedSharesOutstanding
+bookValue
+priceToBook
+lastFiscalYearEnd
+nextFiscalYearEnd
+mostRecentQuarter
+earningsQuarterlyGrowth
+netIncomeToCommon
+trailingEps
+forwardEps
+lastSplitFactor
+lastSplitDate
+enterpriseToRevenue
+52WeekChange
+SandP52WeekChange
+lastDividendValue
+lastDividendDate
+quoteType
+currentPrice
+targetHighPrice
+targetLowPrice
+targetMeanPrice
+targetMedianPrice
+recommendationMean
+recommendationKey
+numberOfAnalystOpinions
+totalCash
+totalCashPerShare
+totalDebt
+totalRevenue
+revenuePerShare
+returnOnAssets
+returnOnEquity
+grossProfits
+operatingCashflow
+earningsGrowth
+revenueGrowth
+grossMargins
+ebitdaMargins
+operatingMargins
+financialCurrency
+symbol
+language
+region
+typeDisp
+quoteSourceName
+triggerable
+customPriceAlertConfidence
+hasPrePostMarketData
+firstTradeDateMilliseconds
+corporateActions
+postMarketTime
+regularMarketTime
+exchange
+messageBoardId
+exchangeTimezoneName
+exchangeTimezoneShortName
+gmtOffSetMilliseconds
+market
+esgPopulated
+regularMarketChangePercent
+regularMarketPrice
+marketState
+shortName
+longName
+postMarketChangePercent
+postMarketPrice
+postMarketChange
+regularMarketChange
+regularMarketDayRange
+fullExchangeName
+averageDailyVolume3Month
+fiftyTwoWeekLowChange
+fiftyTwoWeekLowChangePercent
+fiftyTwoWeekRange
+fiftyTwoWeekHighChange
+fiftyTwoWeekHighChangePercent
+fiftyTwoWeekChangePercent
+dividendDate
+earningsTimestamp
+earningsTimestampStart
+earningsTimestampEnd
+earningsCallTimestampStart
+earningsCallTimestampEnd
+isEarningsDateEstimate
+epsTrailingTwelveMonths
+epsForward
+epsCurrentYear
+priceEpsCurrentYear
+fiftyDayAverageChange
+fiftyDayAverageChangePercent
+twoHundredDayAverageChange
+twoHundredDayAverageChangePercent
+sourceInterval
+exchangeDataDelayedBy
+averageAnalystRating
+cryptoTradeable
+trailingPegRatio
+""
+income_stmt_fields
+Tax Effect Of Unusual Items
+Tax Rate For Calcs
+Total Unusual Items
+Total Unusual Items Excluding Goodwill
+Net Income From Continuing Operation Net Minority Interest
+Reconciled Depreciation
+Net Interest Income
+Interest Expense
+Interest Income
+Normalized Income
+Net Income From Continuing And Discontinued Operation
+Diluted Average Shares
+Basic Average Shares
+Diluted EPS
+Basic EPS
+Diluted NI Availto Com Stockholders
+Net Income Common Stockholders
+Preferred Stock Dividends
+Net Income
+Minority Interests
+Net Income Including Noncontrolling Interests
+Net Income Continuous Operations
+Earnings From Equity Interest Net Of Tax
+Tax Provision
+Pretax Income
+Special Income Charges
+Gain On Sale Of Business
+Other Special Charges
+Impairment Of Capital Assets
+Restructuring And Mergern Acquisition
+Gain On Sale Of Security
+Depreciation Amortization Depletion Income Statement
+Depreciation And Amortization In Income Statement
+Amortization
+Amortization Of Intangibles Income Statement
+Selling General And Administration
+Selling And Marketing Expense
+General And Administrative Expense
+Other Gand A
+Insurance And Claims
+Salaries And Wages
+Total Revenue
+Operating Revenue
+Occupancy And Equipment
+Professional Expense And Contract Services Expense
+Other Non Interest Expense
+""
+balance_sheet_fields
+Treasury Shares Number
+Preferred Shares Number
+Ordinary Shares Number
+Share Issued
+Net Debt
+Total Debt
+Tangible Book Value
+Invested Capital
+Net Tangible Assets
+Capital Lease Obligations
+Common Stock Equity
+Preferred Stock Equity
+Total Capitalization
+Total Equity Gross Minority Interest
+Stockholders Equity
+Gains Losses Not Affecting Retained Earnings
+Treasury Stock
+Retained Earnings
+Additional Paid In Capital
+Capital Stock
+Common Stock
+Preferred Stock
+Total Liabilities Net Minority Interest
+Derivative Product Liabilities
+Employee Benefits
+Non Current Pension And Other Postretirement Benefit Plans
+Non Current Deferred Liabilities
+Non Current Deferred Taxes Liabilities
+Long Term Debt And Capital Lease Obligation
+Long Term Capital Lease Obligation
+Long Term Debt
+Long Term Provisions
+Current Debt And Capital Lease Obligation
+Current Debt
+Other Current Borrowings
+Commercial Paper
+Current Notes Payable
+Payables And Accrued Expenses
+Current Accrued Expenses
+Payables
+Total Tax Payable
+Income Tax Payable
+Accounts Payable
+Total Assets
+Defined Pension Benefit
+Investments And Advances
+Available For Sale Securities
+Trading Securities
+Long Term Equity Investment
+Goodwill And Other Intangible Assets
+Other Intangible Assets
+Goodwill
+Net PPE
+Accumulated Depreciation
+Gross PPE
+Leases
+Machinery Furniture Equipment
+Buildings And Improvements
+Land And Improvements
+Prepaid Assets
+Receivables
+Other Receivables
+Accounts Receivable
+Other Short Term Investments
+Cash And Cash Equivalents
+Cash Financial
+Cash Cash Equivalents And Federal Funds Sold
+""
+cashflow_fields
+Free Cash Flow
+Repurchase Of Capital Stock
+Repayment Of Debt
+Issuance Of Debt
+Issuance Of Capital Stock
+Capital Expenditure
+Interest Paid Supplemental Data
+Income Tax Paid Supplemental Data
+End Cash Position
+Beginning Cash Position
+Effect Of Exchange Rate Changes
+Changes In Cash
+Financing Cash Flow
+Cash Flow From Continuing Financing Activities
+Cash Dividends Paid
+Common Stock Dividend Paid
+Net Preferred Stock Issuance
+Preferred Stock Payments
+Preferred Stock Issuance
+Net Common Stock Issuance
+Common Stock Payments
+Common Stock Issuance
+Net Issuance Payments Of Debt
+Net Long Term Debt Issuance
+Long Term Debt Payments
+Long Term Debt Issuance
+Investing Cash Flow
+Cash Flow From Continuing Investing Activities
+Net Investment Purchase And Sale
+Sale Of Investment
+Purchase Of Investment
+Net Business Purchase And Sale
+Purchase Of Business
+Net PPE Purchase And Sale
+Purchase Of PPE
+Operating Cash Flow
+Cash Flow From Continuing Operating Activities
+Change In Working Capital
+Change In Other Working Capital
+Deferred Tax
+Deferred Income Tax
+Depreciation Amortization Depletion
+Depreciation And Amortization
+Amortization Cash Flow
+Amortization Of Intangibles
+Depreciation
+Operating Gains Losses
+Earnings Losses From Equity Investments
+Gain Loss On Investment Securities
+Gain Loss On Sale Of Business
+Net Income From Continuing Operations
+""

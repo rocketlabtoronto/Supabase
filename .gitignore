@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -205,3 +206,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+=======
+.env
+*.zip
+__pycache__/
+data/
+venv/
+>>>>>>> 7d8fb6c (Initial commit: LookThroughProfits stock price automation system)
