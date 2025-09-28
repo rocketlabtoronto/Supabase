@@ -1,26 +1,25 @@
 # LookThroughProfits Supabase Data Pipeline
 
-Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian daily prices from Yahoo Finance (yfinance) and imports SimFin financial statements from CSV into a Supabase (Postgres) database. Includes smart resume (US), upsert-safe inserts, and .env-based configuration.
+Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian daily prices and annual financial statements from SimFin into a Supabase (Postgres) database via the SimFin Bulk API (CSV-in-zip, parsed in-memory). Includes batching, progress logs, and .env-based configuration.
 
 ## Features
 
-- US/CA daily prices via yfinance with robust error handling
-- Annual financial statements via SimFin CSV exports (semicolon-delimited)
-- Smart resume: continues where it left off based on last processed ticker/date
-- Exchange tagging (US/CA) and upsert-safe inserts
+- US/CA daily prices via SimFin bulk shareprices dataset (no Yahoo fallback)
+- Annual financial statements via SimFin bulk datasets (income/balance/cashflow)
+- Insert-if-newer policy for prices (no upserts); supports time-based gating via `as_of` if present
+- Exchange tagging (US/CA) and batched inserts for performance
 - Supabase Postgres compatible schema and SQL helpers
 
 ## Repository structure
 
-- `Orchestrator.py` — Orchestrates CA Yahoo financials + SimFin CSV loading
+- `Orchestrator.py` — Orchestrates SimFin financials (CA/US) and SimFin prices (US/CA)
 - `ingestion/`
-  - `ingest_yahoo_financials_postgres_ca.py` — Canadian annual financials via Yahoo Finance
-  - `ingest_simfin_financials_csv_to_postgres_us.py` — Import IS/BS from SimFin CSV exports
-  - `ingest_yahoo_prices_us.py` — US daily prices via Yahoo Finance (smart resume)
-  - `ingest_yahoo_prices_ca.py` — Canadian daily prices via Yahoo Finance
+  - `ingest_simfin_financials_csv_to_postgres_ca.py` — Canadian annual financials via SimFin (banks/insurance/general; IS/BS/CF)
+  - `ingest_simfin_financials_csv_to_postgres_us.py` — US annual financials via SimFin (banks/insurance/general; IS/BS/CF)
+  - `ingest_simfin_prices_us.py` — US daily prices via SimFin
+  - `ingest_simfin_prices_ca.py` — Canadian daily prices via SimFin
 - `tools/`
   - `scrape_tsx_stocksymbols_ca.py` — Scrape TSX stock symbols (no prices) to `data/ca_tickers.txt`
-  - `explore_yahoo_finance_fields.py` — Discover available Yahoo Finance fields
 - `sql/`
   - `create_tables.sql` — Financials table schema (statements)
   - `create_tables_stockprice.sql` — Stock prices table schema (daily OHLCV)
@@ -29,7 +28,7 @@ Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian
 
 ## Workflow (at a glance)
 
-There are five flows. The Orchestrator runs #2 then #3 (in that order). The others are manual.
+There are four primary ingestion flows. The Orchestrator runs all four in order.
 
 ```
 1) TSX symbols (optional)
@@ -39,31 +38,32 @@ There are five flows. The Orchestrator runs #2 then #3 (in that order). The othe
      [Used when CA_TICKERS=FILE]
 
 2) CA financials (Orchestrator step 1)
-   Yahoo Finance (via yfinance)
-     ---> ingestion/ingest_yahoo_financials_postgres_ca.py
-     ---> financials table (Income Statement and Balance Sheet)
+   SimFin Bulk API (income/balance/cashflow; banks/insurance/general)
+     ---> ingestion/ingest_simfin_financials_csv_to_postgres_ca.py
+     ---> financials table (IS/BS/CF)
 
 3) US financials (Orchestrator step 2)
-   SimFin CSV exports (semicolon-delimited)
+   SimFin Bulk API (income/balance/cashflow; banks/insurance/general)
      ---> ingestion/ingest_simfin_financials_csv_to_postgres_us.py
-     ---> financials table (Income Statement and Balance Sheet)
+     ---> financials table (IS/BS/CF)
 
-4) US daily prices (run manually)
-   Yahoo Finance (via yfinance)
-     ---> ingestion/ingest_yahoo_prices_us.py
+4) US daily prices (Orchestrator step 3)
+  SimFin Bulk API (shareprices; variant=latest or daily)
+    ---> ingestion/ingest_simfin_prices_us.py
      ---> stock_prices (exchange='US')
 
-5) CA daily prices (run manually)
-   Yahoo Finance (via yfinance)
-     ---> ingestion/ingest_yahoo_prices_ca.py
+5) CA daily prices (Orchestrator step 4)
+  SimFin Bulk API (shareprices; variant=latest or daily)
+    ---> ingestion/ingest_simfin_prices_ca.py
      ---> stock_prices (exchange='CA')
 ```
 
 ### Source details
 
 - EODData (https://www.eoddata.com/): Public website with TSX listings rendered as HTML. The scraper parses symbol links from A–Z pages using a regex; there is no REST API used. Output is a plain text file `data/ca_tickers.txt` with one `.TO`-suffixed symbol per line.
-- Yahoo Finance: Online market data service accessed via the Python `yfinance` library (no API key required). The loaders request recent price history and write to the `stock_prices` table.
-- SimFin: Financial statement CSVs downloaded from simfin.com (semicolon-delimited). Place files like `Income_Statement_Annual.csv` and `Balance_Sheet_Annual.csv` under `SIMFIN_DATA_DIR` (default `data/`).
+- SimFin: Bulk download API returning zip files containing semicolon-delimited CSVs. We read them directly into pandas without writing to disk. Datasets used:
+  - Financials: income, income-banks, income-insurance; balance, balance-banks, balance-insurance; cashflow, cashflow-banks, cashflow-insurance.
+  - Prices: shareprices (variant=latest or daily).
 
 ## Setup
 
@@ -79,7 +79,7 @@ python -m venv venv
 2. Install dependencies
 
 ```
-python -m pip install -r dependencies.txt
+python -m pip install -r requirements.txt
 ```
 
 3. Configure environment variables in a `.env` file at the repo root
@@ -94,10 +94,12 @@ Required for database:
 
 Optional for loaders:
 
-- `SIMFIN_API_KEY` — SimFin API key (for future SimFin API loaders)
-- `SIMFIN_DATA_DIR` — Folder containing SimFin CSV exports (default `data`)
-- `CA_TICKERS` — Comma list (e.g. `BNS.TO,RY.TO`) or `FILE` to read `data/ca_tickers.txt`
-- `YFINANCE_DELAY` — Seconds between requests for US prices loader (default `1.0`)
+- `SIMFIN_API_KEY` — SimFin API key (required for all SimFin ingesters)
+- `SIMFIN_MARKET` — SimFin market code; defaults: 'world' (CA financials/prices), 'us' (US prices). You can override per run via env.
+- `SIMFIN_PRICES_VARIANT` — 'latest' (default) or 'daily' for shareprices datasets.
+- `SIMFIN_INSERT_BATCH` — Batch size for financials inserts (default 5000)
+- `PRICES_INSERT_BATCH` — Batch size for prices inserts (default 1000)
+- `CA_TICKERS` — Comma list (e.g. `BNS.TO,RY.TO`) or `FILE` to read `data/ca_tickers.txt` (used to filter CA SimFin financials)
 - `CLEAR_STOCK_PRICES` — `true` to truncate prices before load (use with care)
 
 Example `.env`:
@@ -109,10 +111,11 @@ DB_NAME=financials
 DB_USER=me
 DB_PASSWORD=secret
 SIMFIN_API_KEY=your_simfin_key
-SIMFIN_DATA_DIR=data
 CA_TICKERS=FILE
-YFINANCE_DELAY=1.0
 CLEAR_STOCK_PRICES=false
+SIMFIN_PRICES_VARIANT=latest
+PRICES_INSERT_BATCH=1000
+SIMFIN_INSERT_BATCH=5000
 ```
 
 ## Database schema
@@ -124,7 +127,7 @@ Apply the SQL files in `sql/` to your Postgres database (Supabase):
 
 ## Usage
 
-Run orchestrator:
+Run orchestrator (runs CA financials → US financials → US prices → CA prices):
 
 ```
 python Orchestrator.py
@@ -133,19 +136,17 @@ python Orchestrator.py
 Or run individual ingesters, e.g.:
 
 ```
-python ingestion/ingest_yahoo_prices_us.py
-python ingestion/ingest_yahoo_prices_ca.py
+python ingestion/ingest_simfin_prices_us.py
+python ingestion/ingest_simfin_prices_ca.py
 python ingestion/ingest_simfin_financials_csv_to_postgres_us.py
-python ingestion/ingest_yahoo_financials_postgres_ca.py
+python ingestion/ingest_simfin_financials_csv_to_postgres_ca.py
 ```
 
 Notes:
 
-- The US yfinance loader implements an adjustable delay (`YFINANCE_DELAY`) to respect rate limits; the CA loader currently does not delay between requests.
-- US loader resumes from the last processed ticker automatically using entries written for the current day.
-- Canadian loader normalizes tickers and tags `exchange='CA'`.
-- SimFin CSVs must be semicolon-delimited and placed in `SIMFIN_DATA_DIR`.
-- Legacy files have been removed or converted to in-place shims; prefer calling modules under `ingestion/` and `tools/` directly.
+- Prices: insert-only when incoming timestamp/date is newer than existing (no upserts); if table has `as_of` and SimFin provides `DateTime/Timestamp`, time-based gating is used; otherwise date-based (`latest_day`).
+- Canadian financials use CA_TICKERS filter (env or `data/ca_tickers.txt`).
+- Legacy Yahoo-based loaders are deprecated and now delegate to SimFin equivalents where present.
 
 ## Troubleshooting
 

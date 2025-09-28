@@ -1,12 +1,14 @@
 #!/usr/bin/env python
-"""Orchestrator: load CA Yahoo financials and SimFin CSV statements."""
+"""Orchestrator: run SimFin financials (CA/US) and SimFin prices (US/CA)."""
 import subprocess
 import pathlib
 import sys
 
 SCRIPTS = [
-    "ingestion/ingest_yahoo_financials_postgres_ca.py",
+    "ingestion/ingest_simfin_financials_csv_to_postgres_ca.py",
     "ingestion/ingest_simfin_financials_csv_to_postgres_us.py",
+    "ingestion/ingest_simfin_prices_us.py",
+    "ingestion/ingest_simfin_prices_ca.py",
 ]
 
 def main():
