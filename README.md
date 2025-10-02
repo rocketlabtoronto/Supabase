@@ -1,23 +1,24 @@
 # LookThroughProfits Supabase Data Pipeline
 
-Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian daily prices and annual financial statements from SimFin into a Supabase (Postgres) database via the SimFin Bulk API (CSV-in-zip, parsed in-memory). Includes batching, progress logs, and .env-based configuration.
+Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian issuer listings, daily prices, and annual financial statements into a Supabase (Postgres) database. Uses a mix of SimFin (bulk) and Yahoo Finance for coverage, with batch inserts, progress logs, and .env-based configuration.
 
 ## Features
 
-- US/CA daily prices via SimFin bulk shareprices dataset (no Yahoo fallback)
-- Annual financial statements via SimFin bulk datasets (income/balance/cashflow)
+- CA daily prices via Yahoo Finance (parallel download, batch insert)
+- US daily prices via SimFin bulk shareprices dataset
+- Annual financial statements via SimFin bulk (US) and Yahoo Finance (CA) into a normalized `financials` table
 - Insert-if-newer policy for prices (no upserts); supports time-based gating via `as_of` if present
 - Exchange tagging (US/CA) and batched inserts for performance
 - Supabase Postgres compatible schema and SQL helpers
 
 ## Repository structure
 
-- `Orchestrator.py` — Orchestrates SimFin financials (CA/US) and SimFin prices (US/CA)
+- `Orchestrator.py` — Orchestrates: TMX listings → CA financials (yfinance) → US financials (SimFin) → US prices (SimFin) → CA prices (yfinance)
 - `ingestion/`
-  - `ingest_simfin_financials_csv_to_postgres_ca.py` — Canadian annual financials via SimFin (banks/insurance/general; IS/BS/CF)
-  - `ingest_simfin_financials_csv_to_postgres_us.py` — US annual financials via SimFin (banks/insurance/general; IS/BS/CF)
-  - `ingest_simfin_prices_us.py` — US daily prices via SimFin
-  - `ingest_simfin_prices_ca.py` — Canadian daily prices via SimFin
+  - `ingest_yfinance_financials_api_to_postgres_ca.py` — CA annual/quarterly yfinance ingest into normalized `financials`
+  - `ingest_simfin_financials_api_to_postgres_us.py` — US annual financials via SimFin into normalized `financials`
+  - `ingest_simfin_prices_us.py` — US daily prices via SimFin bulk
+  - `ingest_yfinance_prices_ca.py` — CA daily prices via yfinance (parallel, batch insert)
 - `tools/`
   - `scrape_tsx_stocksymbols_ca.py` — Scrape TSX stock symbols (no prices) to `data/ca_tickers.txt`
 - `sql/`
@@ -28,42 +29,34 @@ Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian
 
 ## Workflow (at a glance)
 
-There are four primary ingestion flows. The Orchestrator runs all four in order.
+The orchestrator runs five steps in order:
 
 ```
-1) TSX symbols (optional)
-   EODData.com (TSX listings HTML)
-     ---> tools/scrape_tsx_stocksymbols_ca.py
-     ---> data/ca_tickers.txt (one .TO symbol per line)
-     [Used when CA_TICKERS=FILE]
+1) TMX issuer listings → data/tmx_listed_companies.csv
+  scripts/get_tmx_listed_companies.py
 
-2) CA financials (Orchestrator step 1)
-   SimFin Bulk API (income/balance/cashflow; banks/insurance/general)
-     ---> ingestion/ingest_simfin_financials_csv_to_postgres_ca.py
-     ---> financials table (IS/BS/CF)
+2) CA financials (yfinance, mandatory)
+  ingestion/ingest_yfinance_financials_api_to_postgres_ca.py → financials
 
-3) US financials (Orchestrator step 2)
-   SimFin Bulk API (income/balance/cashflow; banks/insurance/general)
-     ---> ingestion/ingest_simfin_financials_csv_to_postgres_us.py
-     ---> financials table (IS/BS/CF)
+3) US financials (SimFin bulk)
+  ingestion/ingest_simfin_financials_api_to_postgres_us.py → financials
 
-4) US daily prices (Orchestrator step 3)
-  SimFin Bulk API (shareprices; variant=latest or daily)
-    ---> ingestion/ingest_simfin_prices_us.py
-     ---> stock_prices (exchange='US')
+4) US daily prices (SimFin bulk; variant=latest or daily)
+  ingestion/ingest_simfin_prices_us.py → stock_prices (exchange='US')
 
-5) CA daily prices (Orchestrator step 4)
-  SimFin Bulk API (shareprices; variant=latest or daily)
-    ---> ingestion/ingest_simfin_prices_ca.py
-     ---> stock_prices (exchange='CA')
+5) CA daily prices (yfinance; parallel)
+  ingestion/ingest_yfinance_prices_ca.py → stock_prices (exchange='CA')
 ```
 
 ### Source details
 
 - EODData (https://www.eoddata.com/): Public website with TSX listings rendered as HTML. The scraper parses symbol links from A–Z pages using a regex; there is no REST API used. Output is a plain text file `data/ca_tickers.txt` with one `.TO`-suffixed symbol per line.
-- SimFin: Bulk download API returning zip files containing semicolon-delimited CSVs. We read them directly into pandas without writing to disk. Datasets used:
-  - Financials: income, income-banks, income-insurance; balance, balance-banks, balance-insurance; cashflow, cashflow-banks, cashflow-insurance.
-  - Prices: shareprices (variant=latest or daily).
+- SimFin: Bulk download API returning zip files containing semicolon-delimited CSVs. Datasets used:
+  - Financials (US): income, income-banks, income-insurance; balance (+-banks/+ -insurance); cashflow (+-banks/+ -insurance)
+  - Prices (US): shareprices (variant=latest or daily)
+- Yahoo Finance:
+  - Financials (CA): pulled by `yfinance` and normalized to row-wise tags
+  - Prices (CA): concurrent `yfinance` download of latest daily bar
 
 ## Setup
 
@@ -95,12 +88,16 @@ Required for database:
 Optional for loaders:
 
 - `SIMFIN_API_KEY` — SimFin API key (required for all SimFin ingesters)
-- `SIMFIN_MARKET` — SimFin market code; defaults: 'world' (CA financials/prices), 'us' (US prices). You can override per run via env.
+- `SIMFIN_MARKET` — SimFin market code; defaults: 'us' for US datasets (and 'ca' for CA prices if using SimFin)
 - `SIMFIN_PRICES_VARIANT` — 'latest' (default) or 'daily' for shareprices datasets.
 - `SIMFIN_INSERT_BATCH` — Batch size for financials inserts (default 5000)
 - `PRICES_INSERT_BATCH` — Batch size for prices inserts (default 1000)
-- `CA_TICKERS` — Comma list (e.g. `BNS.TO,RY.TO`) or `FILE` to read `data/ca_tickers.txt` (used to filter CA SimFin financials)
 - `CLEAR_STOCK_PRICES` — `true` to truncate prices before load (use with care)
+- `YF_MAX_WORKERS` — Concurrency for yfinance (default 24)
+- `YFIN_MAX_TICKERS` — Cap CA tickers processed (for smoke tests)
+- `YF_USE_HISTORY` — Use per-symbol history path (default true)
+- `YF_USE_FAST_INFO` — Use fast_info path (default false)
+- `YF_USE_QUOTES` — Use Yahoo quote API path (default false; may 401)
 
 Example `.env`:
 
@@ -127,26 +124,33 @@ Apply the SQL files in `sql/` to your Postgres database (Supabase):
 
 ## Usage
 
-Run orchestrator (runs CA financials → US financials → US prices → CA prices):
+Run orchestrator (runs TMX → CA financials → US financials → US prices → CA prices):
 
 ```
 python Orchestrator.py
 ```
 
+Optional: start with a clean slate using --truncate (clears financials and stock_prices once at the start):
+
+```powershell
+python Orchestrator.py --truncate
+```
+
 Or run individual ingesters, e.g.:
 
 ```
+python scripts/get_tmx_listed_companies.py
+python ingestion/ingest_yfinance_financials_api_to_postgres_ca.py
+python ingestion/ingest_simfin_financials_api_to_postgres_us.py
 python ingestion/ingest_simfin_prices_us.py
-python ingestion/ingest_simfin_prices_ca.py
-python ingestion/ingest_simfin_financials_csv_to_postgres_us.py
-python ingestion/ingest_simfin_financials_csv_to_postgres_ca.py
+python ingestion/ingest_yfinance_prices_ca.py
 ```
 
 Notes:
 
 - Prices: insert-only when incoming timestamp/date is newer than existing (no upserts); if table has `as_of` and SimFin provides `DateTime/Timestamp`, time-based gating is used; otherwise date-based (`latest_day`).
-- Canadian financials use CA_TICKERS filter (env or `data/ca_tickers.txt`).
-- Legacy Yahoo-based loaders are deprecated and now delegate to SimFin equivalents where present.
+- CA financials are mandatory (yfinance) and feed the normalized `financials` table.
+- CA prices default to yfinance; SimFin CA prices are available via `ingestion/ingest_simfin_prices_ca.py` if preferred.
 
 ## Troubleshooting
 

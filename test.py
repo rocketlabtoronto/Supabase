@@ -95,12 +95,17 @@ def fetch_bulk_dataset(dataset: str, market: str, variant: str, api_key: str) ->
 		# Pick the first CSV (there should only be one)
 		with zf.open(csv_names[0]) as f:
 			# SimFin CSVs use semicolon separators.
-			# Note on memory: this reads the entire CSV into RAM.
-			# If memory becomes a constraint, consider:
-			#  - Using pandas.read_csv(..., usecols=[...]) to limit columns
-			#  - Using chunksize=... and filtering chunks for the ticker
-			#  - Switching to a per-ticker JSON API endpoint (if your plan allows)
-			df = pd.read_csv(f, sep=';', header=0, low_memory=False)
+			# Load ONLY the first six columns for efficiency per request.
+			# This uses positional indices (0..5). Column names are preserved for those six.
+			# Note: downstream fields like Revenue/Net Income might not be available
+			# if they do not fall within the first six columns of the dataset.
+			df = pd.read_csv(
+				f,
+				sep=';',
+				header=0,
+				low_memory=False,
+				usecols=range(6),
+			)
 			return df
 
 
@@ -168,67 +173,6 @@ def extract_latest_income(df: pd.DataFrame, ticker: str) -> Optional[Tuple[Optio
 	return (rev, ni)
 
 
-def extract_latest_cashflow(df: pd.DataFrame, ticker: str) -> Optional[Tuple[Optional[float], Optional[float]]]:
-	"""Filter a SimFin Cash Flow DataFrame to a given ticker, returning
-	(latest_operating_cash_flow, latest_free_cash_flow).
-
-	Mirrors extract_latest_income logic for consistency: handles 'Ticker' as
-	index or column, sorts by Report Date or Fiscal Year to pick the latest.
-	"""
-	if 'Ticker' not in df.columns:
-		if df.index.name == 'Ticker' or (isinstance(df.index, pd.MultiIndex) and 'Ticker' in df.index.names):
-			try:
-				df = df.reset_index()
-			except Exception:
-				pass
-
-	if 'Ticker' not in df.columns:
-		return None
-
-	sub = df[df['Ticker'].astype(str).str.upper() == ticker.upper()].copy()
-	if sub.empty:
-		return None
-
-	sort_cols = []
-	if 'Report Date' in sub.columns:
-		try:
-			sub['__rd'] = pd.to_datetime(sub['Report Date'], errors='coerce')
-			sort_cols.append('__rd')
-		except Exception:
-			pass
-	if not sort_cols and 'Fiscal Year' in sub.columns:
-		sort_cols.append('Fiscal Year')
-
-	if sort_cols:
-		sub = sub.sort_values(sort_cols, ascending=True)
-
-	latest = sub.iloc[-1]
-
-	ocf_cols = [
-		'Net Cash from Operating Activities',
-		'Operating Cash Flow',
-		'Cash From Operations',
-		'Net Cash Provided by Operating Activities',
-	]
-	fcf_cols = [
-		'Free Cash Flow',
-	]
-
-	def pick_float(row, candidates):
-		for c in candidates:
-			if c in row.index:
-				v = row[c]
-				try:
-					return float(str(v).replace(',', ''))
-				except Exception:
-					continue
-		return None
-
-	ocf = pick_float(latest, ocf_cols)
-	fcf = pick_float(latest, fcf_cols)
-	return (ocf, fcf)
-
-
 def main():
 	"""Entrypoint for running this script directly.
 
@@ -254,7 +198,7 @@ def main():
 	# 3) Try banks first, then general income. Track which datasets we attempt
 	# so we can print a helpful error if nothing is found.
 	tried = []
-	for dataset in ['income-banks', 'income-insurance', 'income']:
+	for dataset in ['income-banks', 'income']:
 		tried.append(dataset)
 		try:
 			df = fetch_bulk_dataset(dataset=dataset, market=market, variant=variant, api_key=api_key)
@@ -272,19 +216,6 @@ def main():
 		res = extract_latest_income(df, ticker)
 		if res is not None:
 			revenue, net_income = res
-			# Also try to fetch cash flow (banks -> insurance -> general)
-			ocf, fcf, cf_dataset = None, None, None
-			for cf_ds in ['cashflow-banks', 'cashflow-insurance', 'cashflow']:
-				try:
-					df_cf = fetch_bulk_dataset(dataset=cf_ds, market=market, variant=variant, api_key=api_key)
-					res_cf = extract_latest_cashflow(df_cf, ticker)
-					if res_cf is not None:
-						ocf, fcf = res_cf
-						cf_dataset = cf_ds
-						break
-				except Exception:
-					continue
-
 			print({
 				'ticker': ticker,
 				'dataset': dataset,
@@ -292,9 +223,6 @@ def main():
 				'variant': variant,
 				'revenue': revenue,
 				'net_income': net_income,
-				'operating_cash_flow': ocf,
-				'free_cash_flow': fcf,
-				'cashflow_dataset': cf_dataset,
 			})
 			return
 
