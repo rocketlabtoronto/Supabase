@@ -1,15 +1,18 @@
 #!/usr/bin/env python
-"""Orchestrator: end-to-end run for listings, financials, and prices.
+"""Orchestrator: end-to-end run for financials and prices.
 
 Steps:
-1) Generate TMX listings CSV (data/tmx_listed_companies.csv)
-2) Ingest CA financials (yfinance → normalized financials table)
-3) Ingest US financials (SimFin bulk → normalized financials table)
-4) Ingest US daily prices (SimFin bulk → stock_prices)
-5) Ingest CA daily prices (yfinance → stock_prices)
+1) Download official TMX symbol list (tsx_tsxv_all_symbols.csv from TMX API)
+2) Derive instrument types (ETFs, trusts, etc.) → instrument_meta table
+3) Ingest CA financials (yfinance → normalized financials table)
+4) Ingest US financials (SimFin bulk → normalized financials table)
+5) Ingest US daily prices (SimFin bulk → stock_prices)
+6) Ingest CA daily prices (yfinance → stock_prices)
 
-Optional:
---truncate  Truncate tables financials and stock_prices once at the start of the run.
+The orchestrator handles all dependencies automatically - just run and go!
+
+Note: ALWAYS truncates financials and stock_prices tables at the start of each run
+      to ensure clean data with no duplicates.
 """
 import os
 import subprocess
@@ -23,7 +26,7 @@ from dotenv import load_dotenv
 from utils.logger import get_logger
 
 SCRIPTS = [
-    "scripts/get_tmx_listed_companies.py",
+    "scripts/download_tsx_symbols_from_api.py",
     "ingestion/derive_instrument_types_ca.py",
     "ingestion/ingest_yfinance_financials_api_to_postgres_ca.py",
     "ingestion/ingest_simfin_financials_api_to_postgres_us.py",
@@ -73,18 +76,17 @@ def _truncate_tables():
 def main():
     log = get_logger("orchestrator")
     parser = argparse.ArgumentParser(description="Run the full LookThroughProfits data pipeline")
-    parser.add_argument("--truncate", action="store_true", help="Truncate financials and stock_prices at start")
     args = parser.parse_args()
 
     root = pathlib.Path(__file__).resolve().parent
 
-    if args.truncate:
-        try:
-            _truncate_tables()
-        except Exception as e:
-            log.error("Truncate step failed; aborting run", exc_info=e)
-            # Stop here to avoid mixing old/new data if truncate was explicitly requested
-            sys.exit(1)
+    # ALWAYS truncate financials and stock_prices at the beginning of each run
+    log.info("Truncating financials and stock_prices tables before run...")
+    try:
+        _truncate_tables()
+    except Exception as e:
+        log.error("Truncate step failed; aborting run", exc_info=e)
+        sys.exit(1)
 
     max_errors = 3
     try:
@@ -131,6 +133,10 @@ def main():
             if errors >= max_errors:
                 log.critical("Too many step failures (errors=%s >= max=%s). Aborting run.", errors, max_errors)
                 sys.exit(1)
+    
+    log.info("="*80)
+    log.info("ORCHESTRATOR COMPLETE")
+    log.info("="*80)
 
 if __name__ == "__main__":
     main()

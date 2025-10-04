@@ -48,6 +48,7 @@ from utils.logger import get_logger
 from utils.symbols import load_instrument_meta_map, yahoo_variants_all
 from utils.symbols import tmx_symbol
 
+# Load .env file - always use .env configuration (no shell overrides)
 load_dotenv(override=True)
 log = get_logger("ingest_yfinance_prices_ca")
 
@@ -207,47 +208,6 @@ def load_official_tsx_symbols(csv_path: str, cap: int | None = None) -> List[Tup
 	return rows
 
 
-def load_tmx_symbols(csv_path: str, cap: int | None = None) -> List[Tuple[str, str, str]]:
-	"""DEPRECATED: Use load_official_tsx_symbols instead.
-	
-	Old function kept for backward compatibility but logs warning.
-	Returns list of tuples: (root, exchange, yahoo)
-	"""
-	log.warning("load_tmx_symbols is DEPRECATED - using load_official_tsx_symbols instead")
-	
-	# Try new format first
-	official_csv = csv_path.replace('tmx_listed_companies.csv', 'tsx_tsxv_all_symbols.csv')
-	if os.path.exists(official_csv):
-		official_rows = load_official_tsx_symbols(official_csv, cap=cap)
-		# Convert to old format: (parent_symbol, exchange_code, yahoo_symbol)
-		result = []
-		for tmx_sym, exchange, yahoo_sym, parent_sym in official_rows:
-			# Map exchange: TSX->TSX, TSXV->TSXV
-			result.append((parent_sym, exchange, yahoo_sym))
-		return result
-	
-	# Fall back to old CSV format
-	df = pd.read_csv(csv_path)
-	# Normalize column names we need
-	if 'Root Ticker' not in df.columns or 'Exchange' not in df.columns:
-		raise RuntimeError("tmx_listed_companies.csv missing 'Root Ticker' or 'Exchange' columns")
-	tmp = (
-		df[['Root Ticker', 'Exchange']]
-		.rename(columns={'Root Ticker': 'root', 'Exchange': 'ex'})
-		.dropna()
-	)
-	tmp['root'] = tmp['root'].astype(str).str.strip().str.upper()
-	tmp['ex'] = tmp['ex'].astype(str).str.strip().str.upper()
-	tmp = tmp[tmp['root'] != '']
-	tmp = tmp.drop_duplicates(subset=['root', 'ex'])
-	tmp['yahoo'] = tmp.apply(lambda r: yahoo_symbol(r['root'], r['ex']), axis=1)
-	tmp = tmp[tmp['yahoo'] != '']
-	rows = list(tmp[['root', 'ex', 'yahoo']].itertuples(index=False, name=None))
-	if cap is not None and cap > 0:
-		rows = rows[:cap]
-	return rows
-
-
 def safe_num(v):
 	try:
 		if v is None or (isinstance(v, float) and math.isnan(v)):
@@ -300,85 +260,69 @@ def main():
 	conn.autocommit = True
 	cur = conn.cursor()
 
-	if os.getenv('CLEAR_STOCK_PRICES', 'false').lower() == 'true':
+	# Track whether we're doing a full refresh
+	clear_env = os.getenv('CLEAR_STOCK_PRICES', 'false')
+	is_full_refresh = clear_env.lower() == 'true'
+	log.info("CLEAR_STOCK_PRICES env var: '%s', is_full_refresh: %s", clear_env, is_full_refresh)
+	
+	if is_full_refresh:
 		log.info('Clearing existing CA rows from stock_prices…')
 		cur.execute("DELETE FROM stock_prices WHERE exchange='CA'")
 		log.info("Deleted %s rows", cur.rowcount)
+	else:
+		log.info("Skipping table clear (incremental mode)")
 
-	# Load official TMX symbol list (no more guessing!)
+	# Load official TMX symbol list (REQUIRED - no fallback)
 	official_csv_path = os.path.join('data', 'tsx_tsxv_all_symbols.csv')
 	
-	# Check if official list exists, otherwise fall back to old CSV
-	if os.path.exists(official_csv_path):
-		log.info("Using official TMX API symbol list: %s", official_csv_path)
-		max_tickers = get_env_int('YFIN_MAX_TICKERS', 0)
-		cap = max_tickers if max_tickers > 0 else None
-		try:
-			# official_rows: list[(tmx_symbol, exchange, yahoo_symbol, parent_symbol)]
-			official_rows = load_official_tsx_symbols(official_csv_path, cap=cap)
-		except Exception as e:
-			log.error("Failed to load official TSX symbol list", exc_info=e)
-			return 1
+	# Require official list - NO fallback to old CSV
+	if not os.path.exists(official_csv_path):
+		log.error("Official TMX symbol list not found: %s", official_csv_path)
+		log.error("Generate it with: python scripts/download_tsx_symbols_from_api.py")
+		raise FileNotFoundError(f"Required file missing: {official_csv_path}")
+	
+	log.info("Using official TMX API symbol list: %s", official_csv_path)
+	max_tickers = get_env_int('YFIN_MAX_TICKERS', 0)
+	cap = max_tickers if max_tickers > 0 else None
+	try:
+		# official_rows: list[(tmx_symbol, exchange, yahoo_symbol, parent_symbol)]
+		official_rows = load_official_tsx_symbols(official_csv_path, cap=cap)
+	except Exception as e:
+		log.error("Failed to load official TSX symbol list", exc_info=e)
+		return 1
+	
+	if not official_rows:
+		log.warning('No symbols loaded from official TSX list')
+		return 0
+	
+	# Build symbol maps
+	# ym: yahoo_symbol -> (tmx_symbol, exchange)
+	ym: Dict[str, Tuple[str, str]] = {}
+	suffixed: List[str] = []
+	
+	for tmx_sym, exchange, yahoo_sym, parent_sym in official_rows:
+		# Map exchange names to DB format
+		if exchange == 'TSX':
+			db_exchange = 'CA'  # Use 'CA' for all Canadian stocks in DB
+		elif exchange == 'TSXV':
+			db_exchange = 'CA'
+		else:
+			db_exchange = 'CA'
 		
-		if not official_rows:
-			log.warning('No symbols loaded from official TSX list')
-			return 0
-		
-		# Build symbol maps
-		# ym: yahoo_symbol -> (tmx_symbol, exchange)
-		ym: Dict[str, Tuple[str, str]] = {}
-		suffixed: List[str] = []
-		
-		for tmx_sym, exchange, yahoo_sym, parent_sym in official_rows:
-			# Map exchange names to DB format
-			if exchange == 'TSX':
-				db_exchange = 'CA'  # Use 'CA' for all Canadian stocks in DB
-			elif exchange == 'TSXV':
-				db_exchange = 'CA'
-			else:
-				db_exchange = 'CA'
-			
-			ym[yahoo_sym] = (tmx_sym, db_exchange)
-			suffixed.append(yahoo_sym)
-		
-		log.info("Loaded %s official symbols (no variant guessing needed)", len(suffixed))
-		
-	else:
-		# Fallback to old CSV format with variant guessing
-		log.warning("Official symbol list not found, falling back to old CSV: %s", 
-		            os.path.join('data', 'tmx_listed_companies.csv'))
-		csv_path = os.path.join('data', 'tmx_listed_companies.csv')
-		max_tickers = get_env_int('YFIN_MAX_TICKERS', 0)
-		cap = max_tickers if max_tickers > 0 else None
-		try:
-			rows = load_tmx_symbols(csv_path, cap=cap)
-		except Exception as e:
-			log.error("Failed to load TMX CSV", exc_info=e)
-			return 1
-
-		if not rows:
-			log.warning('No tickers loaded from TMX CSV')
-			return 0
-
-		# Build maps, prefer instrument_meta.yahoo_symbol when available
-		meta_map: Dict[str, str] = {}
-		try:
-			meta_map = load_instrument_meta_map()
-			log.info("Loaded %s instrument_meta mappings", len(meta_map))
-		except Exception as e:
-			log.warning("Failed to load instrument_meta map; proceeding without", exc_info=e)
-
-		# rows: list[(root, ex, yahoo)]
-		ym: Dict[str, Tuple[str, str]] = {}
-		suffixed: List[str] = []
-		for root, ex, y in rows:
-			tmx_sym = tmx_symbol(root, ex)
-			y_final = meta_map.get(tmx_sym, y)
-			ym[y_final] = (root, ex)
-			suffixed.append(y_final)
+		ym[yahoo_sym] = (tmx_sym, db_exchange)
+		suffixed.append(yahoo_sym)
+	
+	log.info("Loaded %s official symbols (no variant guessing needed)", len(suffixed))
 
 	# Existing latest map (gating) by root symbol
-	existing_latest = get_existing_latest_map(conn)
+	# If we just cleared the table, start with empty map to avoid gating issues
+	if is_full_refresh:
+		log.info("Full refresh mode: skipping gating logic (will insert all symbols)")
+		existing_latest = {}
+	else:
+		log.info("Incremental mode: loading existing dates for gating")
+		existing_latest = get_existing_latest_map(conn)
+		log.info("Loaded %s existing symbols for gating", len(existing_latest))
 
 	dl_batch = get_env_int('YF_DL_BATCH', 50)
 	quote_batch = get_env_int('YF_QUOTE_BATCH', 100)

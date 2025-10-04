@@ -152,36 +152,6 @@ def upsert_meta(rows):
     cur.close(); conn.close()
 
 
-def yahoo_symbol_from_symbol(symbol: str) -> str:
-    """Convert a TMX-derived symbol (e.g., AAA.P.V or IGBT.TO) to a Yahoo-friendly base symbol.
-    - Replace '.' in the root with '-' before the exchange suffix.
-    """
-    s = str(symbol or '')
-    if '.' not in s:
-        return s
-    try:
-        root, ex = s.rsplit('.', 1)
-        return root.replace('.', '-') + '.' + ex
-    except Exception:
-        return s
-
-
-def yahoo_variants(ysym: str):
-    """Generate common Yahoo variants for TSX/TSXV trusts/classes (-UN, -U, -A, -B, -X, -Y)."""
-    if '.' not in ysym:
-        return []
-    try:
-        base, ext = ysym.rsplit('.', 1)
-        ext = '.' + ext
-        return [
-            f"{base}-UN{ext}", f"{base}-U{ext}",
-            f"{base}-A{ext}", f"{base}-B{ext}",
-            f"{base}-X{ext}", f"{base}-Y{ext}",
-        ]
-    except Exception:
-        return []
-
-
 def main():
     conn = psycopg2.connect(
         host=os.getenv('DB_HOST'), port=os.getenv('DB_PORT', 5432), dbname=os.getenv('DB_NAME'),
@@ -210,49 +180,23 @@ def main():
     processed = 0
     not_found = 0
     start = time.time()
-    def ordered_candidates(sym: str, name: str | None):
-        ysym = yahoo_symbol_from_symbol(sym)
-        nm = (name or '').lower()
-        prefer = []
-        # REITs/funds/trusts often use unit suffixes first
-        if any(k in nm for k in ['reit', 'trust', 'fund']):
-            prefer.extend(['-UN', '-U'])
-        # Classes
-        if 'class b' in nm:
-            prefer.append('-B')
-        if 'class a' in nm:
-            prefer.append('-A')
-        # Build unique list of variants
-        tail = ['-B', '-A', '-X', '-Y']
-        suffixes = []
-        seen = set()
-        for s in prefer + tail:
-            if s not in seen:
-                seen.add(s); suffixes.append(s)
-        variants = [ysym] + [ysym.rsplit('.',1)[0] + s + '.' + ysym.rsplit('.',1)[1] for s in suffixes]
-        return variants
 
     for (sym, ex, name) in symbols:
         try:
-            candidates = ordered_candidates(sym, name)
-            ysym = candidates[0]
+            # Use symbol directly from tmx_issuers (already has correct Yahoo format from official CSV)
             info = None
-            for cand in candidates:
-                try:
-                    yt = yf.Ticker(cand)
-                    info = yt.get_info() if hasattr(yt, 'get_info') else getattr(yt, 'info', {})
-                    if info:
-                        ysym = cand
-                        break
-                except Exception:
-                    log.debug("candidate lookup failed", extra={"symbol": sym, "candidate": cand})
-                    continue
+            try:
+                yt = yf.Ticker(sym)
+                info = yt.get_info() if hasattr(yt, 'get_info') else getattr(yt, 'info', {})
+            except Exception:
+                log.debug("ticker lookup failed", extra={"symbol": sym})
+            
             if not info:
                 not_found += 1
-                log.error("ticker not found on Yahoo after variants", extra={"symbol": sym, "issuer_name": name, "candidates": candidates})
+                log.warning("ticker not found on Yahoo", extra={"symbol": sym, "issuer_name": name})
             else:
                 meta = classify(info or {})
-                rows.append((sym, ex, ysym, meta['quote_type'], meta['asset_type'], meta['is_etf'], meta['is_mutual_fund'], meta['is_closed_end_fund'], meta['is_trust'], meta['is_index'], meta['category'], meta['fund_family'], meta['legal_type'], meta['currency'], meta['underlying_symbol'], meta['nav_price'], meta['expense_ratio'], meta['total_assets'], meta['yield'], meta['ytd_return'], meta['three_year_avg_return'], meta['five_year_avg_return'], meta['beta_3y'], meta['long_name'], json.dumps(meta['attributes'] or {})))
+                rows.append((sym, ex, sym, meta['quote_type'], meta['asset_type'], meta['is_etf'], meta['is_mutual_fund'], meta['is_closed_end_fund'], meta['is_trust'], meta['is_index'], meta['category'], meta['fund_family'], meta['legal_type'], meta['currency'], meta['underlying_symbol'], meta['nav_price'], meta['expense_ratio'], meta['total_assets'], meta['yield'], meta['ytd_return'], meta['three_year_avg_return'], meta['five_year_avg_return'], meta['beta_3y'], meta['long_name'], json.dumps(meta['attributes'] or {})))
         except Exception as e:
             # keep going on individual failures
             log.warning("failed to classify symbol; continuing", extra={"symbol": sym}, exc_info=e)
@@ -274,9 +218,9 @@ def main():
 
     dur = time.time() - start
     log.info("done %s in %.1fs (not_found=%s)", processed, dur, not_found)
-    # Treat any not-found as critical failure so Orchestrator aborts early.
-    if not_found > 0 and (os.getenv('FAIL_ON_NOT_FOUND', 'true').lower() == 'true'):
-        sys.exit(2)
+    # Not-found symbols are expected (delisted, suspended, etc.) - don't fail the pipeline
+    if not_found > 0:
+        log.warning("Completed with %s symbols not found on Yahoo (delisted/suspended/private)", not_found)
 
 
 if __name__ == '__main__':

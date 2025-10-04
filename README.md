@@ -29,28 +29,33 @@ Automated stock data pipeline powering LookThroughProfits. Loads US and Canadian
 
 ## Workflow (at a glance)
 
-The orchestrator runs five steps in order:
+The orchestrator runs six steps in order:
 
 ```
-1) TMX issuer listings → data/tmx_listed_companies.csv
-  scripts/get_tmx_listed_companies.py
+1) Download official TMX symbol list (TMX API → data/tsx_tsxv_all_symbols.csv)
+  scripts/download_tsx_symbols_from_api.py
 
-2) CA financials (yfinance, mandatory)
+2) Derive instrument types (ETFs, trusts, etc.) → instrument_meta
+  ingestion/derive_instrument_types_ca.py
+
+3) CA financials (yfinance, mandatory)
   ingestion/ingest_yfinance_financials_api_to_postgres_ca.py → financials
 
-3) US financials (SimFin bulk)
+4) US financials (SimFin bulk)
   ingestion/ingest_simfin_financials_api_to_postgres_us.py → financials
 
-4) US daily prices (SimFin bulk; variant=latest or daily)
+5) US daily prices (SimFin bulk; variant=latest or daily)
   ingestion/ingest_simfin_prices_us.py → stock_prices (exchange='US')
 
-5) CA daily prices (yfinance; parallel)
+6) CA daily prices (yfinance; parallel)
   ingestion/ingest_yfinance_prices_ca.py → stock_prices (exchange='CA')
 ```
 
+**The Orchestrator handles all dependencies automatically** - just run `python Orchestrator.py`!
+
 ### Source details
 
-- EODData (https://www.eoddata.com/): Public website with TSX listings rendered as HTML. The scraper parses symbol links from A–Z pages using a regex; there is no REST API used. Output is a plain text file `data/ca_tickers.txt` with one `.TO`-suffixed symbol per line.
+- TMX Official API: JSON API providing complete TSX/TSXV symbol lists with all class suffixes (A, B, PR, UN, etc.). Used by `download_tsx_symbols_from_api.py` to generate the canonical symbol list.
 - SimFin: Bulk download API returning zip files containing semicolon-delimited CSVs. Datasets used:
   - Financials (US): income, income-banks, income-insurance; balance (+-banks/+ -insurance); cashflow (+-banks/+ -insurance)
   - Prices (US): shareprices (variant=latest or daily)
@@ -124,11 +129,19 @@ Apply the SQL files in `sql/` to your Postgres database (Supabase):
 
 ## Usage
 
-Run orchestrator (runs TMX → CA financials → US financials → US prices → CA prices):
+**Simplest approach - Run the orchestrator for complete end-to-end execution:**
 
-```
+```bash
 python Orchestrator.py
 ```
+
+This automatically:
+1. Downloads the latest TMX symbol list (4,246 symbols)
+2. Classifies instruments (ETFs, trusts, REITs, etc.)
+3. Ingests CA financials
+4. Ingests US financials (if `SIMFIN_API_KEY` set)
+5. Ingests US prices (if `SIMFIN_API_KEY` set)
+6. Ingests CA prices (Mode C: 71% coverage, ~2 minutes)
 
 Optional: start with a clean slate using --truncate (clears financials and stock_prices once at the start):
 
@@ -136,10 +149,11 @@ Optional: start with a clean slate using --truncate (clears financials and stock
 python Orchestrator.py --truncate
 ```
 
-Or run individual ingesters, e.g.:
+**Advanced: Run individual ingesters**
 
-```
-python scripts/get_tmx_listed_companies.py
+```bash
+python scripts/download_tsx_symbols_from_api.py
+python ingestion/derive_instrument_types_ca.py
 python ingestion/ingest_yfinance_financials_api_to_postgres_ca.py
 python ingestion/ingest_simfin_financials_api_to_postgres_us.py
 python ingestion/ingest_simfin_prices_us.py
@@ -148,9 +162,10 @@ python ingestion/ingest_yfinance_prices_ca.py
 
 Notes:
 
+- **Zero manual steps required**: Orchestrator handles all dependencies automatically
 - Prices: insert-only when incoming timestamp/date is newer than existing (no upserts); if table has `as_of` and SimFin provides `DateTime/Timestamp`, time-based gating is used; otherwise date-based (`latest_day`).
 - CA financials are mandatory (yfinance) and feed the normalized `financials` table.
-- CA prices default to yfinance; SimFin CA prices are available via `ingestion/ingest_simfin_prices_ca.py` if preferred.
+- CA prices: Mode C (history API, 71% coverage, ~2 minutes) configured in `.env`
 
 ## Troubleshooting
 

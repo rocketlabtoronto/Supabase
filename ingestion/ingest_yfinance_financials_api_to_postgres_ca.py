@@ -58,47 +58,41 @@ def _ensure_tmx_table(cur):
 
 
 def insert_tmx_issuers_from_csv():
-    """Read data/tmx_listed_companies.csv, add .TO/.V suffixes, and batch insert into tmx_issuers."""
+    """Read data/tsx_tsxv_all_symbols.csv (official TMX API list) and batch insert into tmx_issuers."""
     repo_root = os.path.dirname(os.path.dirname(__file__))
-    csv_path = os.path.join(repo_root, 'data', 'tmx_listed_companies.csv')
+    csv_path = os.path.join(repo_root, 'data', 'tsx_tsxv_all_symbols.csv')
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV not found: {csv_path}")
+        raise FileNotFoundError(f"Official TMX symbol list not found: {csv_path}. "
+                                f"Generate it with: python scripts/download_tsx_symbols_from_api.py")
 
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
-    # Expected columns from generator script
-    colmap = {c.strip(): c for c in df.columns}
-    for r in ['Co_ID', 'Exchange', 'Name', 'Root Ticker']:
-        if r not in colmap:
-            raise RuntimeError(f"Required column missing: {r}")
-    mc_col = next((c for c in df.columns if c.startswith('Market Cap')), None)
-    os_col = next((c for c in df.columns if c.startswith('O/S Shares')), None)
+    
+    # Expected columns from official API export: symbol, exchange, name, parent_symbol
+    required = ['symbol', 'exchange', 'name']
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise RuntimeError(f"Required columns missing from {csv_path}: {missing}")
 
     rows = []
-    def _suffix_for_exchange(exchange: str) -> str:
-        ex = (exchange or '').upper()
-        if ex in ('TSX', 'TSX-MKT', 'TORONTO'):
-            return '.TO'
-        if ex in ('TSXV', 'TSX-V', 'VENTURE'):
-            return '.V'
-        if ex in ('CSE', 'CN', 'CANADIAN SECURITIES EXCHANGE'):
-            return '.CN'
-        if ex in ('NEO', 'NEO-L', 'NEO EXCHANGE'):
-            return '.NE'
-        return ''
-
     for _, row in df.iterrows():
-        co_id = str(row.get(colmap['Co_ID'])).strip() if pd.notna(row.get(colmap['Co_ID'])) else None
-        exchange = str(row.get(colmap['Exchange'])).strip().upper() if pd.notna(row.get(colmap['Exchange'])) else None
-        name = str(row.get(colmap['Name'])).strip() if pd.notna(row.get(colmap['Name'])) else None
-        root_ticker = str(row.get(colmap['Root Ticker'])).strip().upper() if pd.notna(row.get(colmap['Root Ticker'])) else None
-        source_sheet = str(row.get('SourceSheet')).strip() if 'SourceSheet' in df.columns and pd.notna(row.get('SourceSheet')) else None
-        if not root_ticker or not exchange:
+        symbol_val = str(row.get('symbol')).strip() if pd.notna(row.get('symbol')) else None
+        exchange_val = str(row.get('exchange')).strip().upper() if pd.notna(row.get('exchange')) else None
+        name_val = str(row.get('name')).strip() if pd.notna(row.get('name')) else None
+        parent_symbol = str(row.get('parent_symbol')).strip() if pd.notna(row.get('parent_symbol')) else symbol_val
+        
+        if not symbol_val or not exchange_val:
             continue
-        suffix = _suffix_for_exchange(exchange)
-        symbol = f"{root_ticker}{suffix}" if suffix else root_ticker
-        market_cap = _parse_float(row.get(mc_col)) if mc_col else None
-        os_shares = _parse_float(row.get(os_col)) if os_col else None
-        rows.append((symbol, root_ticker, co_id, exchange, name, market_cap, os_shares, source_sheet))
+        
+        # symbol already has Yahoo suffix (.TO/.V), use parent_symbol as root_ticker
+        root_ticker = parent_symbol if parent_symbol else symbol_val.split('.')[0]
+        
+        # Extract co_id, market_cap, os_shares if they exist in the CSV
+        co_id = str(row.get('co_id')).strip() if 'co_id' in df.columns and pd.notna(row.get('co_id')) else None
+        market_cap = _parse_float(row.get('market_cap')) if 'market_cap' in df.columns else None
+        os_shares = _parse_float(row.get('os_shares')) if 'os_shares' in df.columns else None
+        source_sheet = str(row.get('source_sheet')).strip() if 'source_sheet' in df.columns and pd.notna(row.get('source_sheet')) else None
+        
+        rows.append((symbol_val, root_ticker, co_id, exchange_val, name_val, market_cap, os_shares, source_sheet))
 
     if not rows:
         log.info('[tmx_issuers] No rows to insert.')

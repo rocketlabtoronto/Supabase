@@ -2,20 +2,25 @@
 Short, focused guide for AI coding agents to be immediately productive in this repository.
 
 ## Big picture (read these files first)
-- `Orchestrator.py` — the end-to-end runner (listings → CA financials → US financials → US prices → CA prices).
+- `Orchestrator.py` — the end-to-end runner (TMX download → instrument types → CA financials → US financials → US prices → CA prices).
 - `ingestion/` — ingest scripts (SimFin bulk for US; yfinance for CA). Key files:
   - `ingest_simfin_financials_api_to_postgres_us.py` (SimFin bulk → normalized `financials`)
   - `ingest_simfin_prices_us.py` (SimFin shareprices → `stock_prices`)
   - `ingest_yfinance_financials_api_to_postgres_ca.py` and `ingest_yfinance_prices_ca.py` (yfinance CA flows)
-- `scripts/get_tmx_listed_companies.py` — TMX issuer list extraction that produces `data/tmx_listed_companies.csv`.
+  - `derive_instrument_types_ca.py` — classify instruments (ETFs, trusts, etc.) → `instrument_meta`
+- `scripts/download_tsx_symbols_from_api.py` — TMX official API downloader that produces `data/tsx_tsxv_all_symbols.csv` (4,246 symbols). **Called automatically by Orchestrator**.
 - `utils/` — small helpers: `logger.py` (logging setup), `symbols.py` (symbol ↔ Yahoo mapping).
 - `sql/` — authoritative DB schema; ingestion code relies on specific column names (see `create_tables*.sql`).
 
 ## Developer workflows and commands
 - Create venv and install deps (PowerShell):
   python -m venv venv; .\venv\Scripts\Activate.ps1; python -m pip install -r requirements.txt
-- One-shot pipeline: `python Orchestrator.py` (use `--truncate` to clear tables first). Or run ingesters individually:
-  - `python scripts/get_tmx_listed_companies.py`
+- **One-command end-to-end**: `python Orchestrator.py` (downloads symbols, classifies instruments, ingests everything)
+- Use `--truncate` to clear tables first: `python Orchestrator.py --truncate`
+- Run ingesters individually (advanced):
+  - `python scripts/download_tsx_symbols_from_api.py` (generates tsx_tsxv_all_symbols.csv)
+  - `python ingestion/derive_instrument_types_ca.py`
+  - `python ingestion/ingest_yfinance_financials_api_to_postgres_ca.py`
   - `python ingestion/ingest_simfin_financials_api_to_postgres_us.py`
   - `python ingestion/ingest_simfin_prices_us.py`
   - `python ingestion/ingest_yfinance_prices_ca.py`
@@ -23,12 +28,13 @@ Short, focused guide for AI coding agents to be immediately productive in this r
   SimFin: `SIMFIN_API_KEY` (ingesters skip SimFin steps when missing). Common optional vars: `SIMFIN_MARKET, SIMFIN_PRICES_VARIANT, PRICES_INSERT_BATCH, SIMFIN_INSERT_BATCH, CLEAR_STOCK_PRICES, LOG_LEVEL`.
 
 ## Project-specific conventions & patterns (important to preserve)
+- TMX Official API: `download_tsx_symbols_from_api.py` fetches complete symbol list (4,246 symbols) from TMX JSON API. Outputs `data/tsx_tsxv_all_symbols.csv` which is REQUIRED by all CA ingesters.
 - SimFin bulk API: ingestion scripts expect a ZIP containing a semicolon-delimited CSV. See `fetch_bulk_dataset()` in SimFin ingesters.
 - Insert-only policy for prices: scripts do NOT perform upserts; they insert only when incoming row is newer than stored data. The gating uses `as_of` (timestamp) if present; otherwise `latest_day` (date).
 - Batch inserts: ingestion uses `psycopg2.extras.execute_values` for performance. Batch sizes controlled by env `SIMFIN_INSERT_BATCH` and `PRICES_INSERT_BATCH`.
 - Tag maps: the financials ingester uses tag → candidate column lists (INCOME_TAGS, BALANCE_TAGS, CASHFLOW_TAGS). Changes to these maps directly change what gets persisted.
 - Logging and telemetry: ingesters write an `ingest_logs` entry at end/start/failure. Use these rows to summarize runs.
-- Robust column detection: scripts defensively probe CSV/Excel structure (see `ensure_ticker_column()` and header detection in `get_tmx_listed_companies.py`).
+- Symbol handling: NO variant guessing. All symbols come from official TMX API with exact Yahoo suffixes (.TO, .V, -A, -B, .PR.E, etc.).
 
 ## Integration points & external dependencies
 - SimFin (bulk ZIP API) — used for US financials and prices. Requires `SIMFIN_API_KEY`.
@@ -52,7 +58,7 @@ Short, focused guide for AI coding agents to be immediately productive in this r
 - Orchestrator.py (process orchestration, error handling, PYTHONPATH injection)
 - ingestion/ingest_simfin_financials_api_to_postgres_us.py (tag mapping, batch insert pattern)
 - ingestion/ingest_simfin_prices_us.py (bulk CSV -> filter -> batch insert; gating logic)
-- scripts/get_tmx_listed_companies.py (Excel parsing heuristics)
+- scripts/download_tsx_symbols_from_api.py (TMX official API integration)
 - utils/logger.py and utils/symbols.py
 - sql/*.sql (DB schema expectations)
 
